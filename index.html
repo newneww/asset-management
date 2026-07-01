@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ระบบจัดการทรัพย์สิน / Asset Management</title>
+  <meta name="description" content="Demo asset & equipment loan management: technician service, central DB, admin dashboard.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%97%82%EF%B8%8F</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo">🗂️</span>
+      <div class="brand-text">
+        <div class="brand-title" data-i18n="appTitle">ระบบจัดการทรัพย์สิน</div>
+        <div class="brand-sub" data-i18n="appSubtitle">เบิก · ยืม · Audit · อนุมัติ</div>
+      </div>
+    </div>
+    <nav class="role-switch" id="role-switch"></nav>
+    <div class="header-actions">
+      <button class="icon-btn" id="notif-btn" title="Notifications">🔔<span id="notif-badge" class="badge">0</span></button>
+      <button class="icon-btn" id="lang-btn" title="TH/EN">TH/EN</button>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <aside class="sidenav" id="sidenav"></aside>
+    <main class="view" id="view"></main>
+  </div>
+
+  <div class="notif-panel" id="notif-panel" hidden>
+    <div class="notif-head">🔔 <span data-i18n="realtime">การแจ้งเตือน</span></div>
+    <div class="notif-list" id="notif-list"></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
