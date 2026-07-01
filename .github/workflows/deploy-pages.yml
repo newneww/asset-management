@@ -30,11 +30,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Enables Pages automatically if it isn't turned on yet.
+      # Pages must already be enabled in Settings → Pages → Source: GitHub Actions.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
