@@ -2,7 +2,7 @@
 const LANG_KEY = 'assetmgmt.lang';
 
 const STRINGS = {
-  appTitle: { th: 'ระบบจัดการทรัพย์สิน', en: 'Asset Management System' },
+  appTitle: { th: 'Asset Management', en: 'Asset Management' },
   appSubtitle: { th: 'เบิก · ยืม · Audit · อนุมัติ', en: 'Loan · Move · Audit · Approve' },
   roleTech: { th: 'ช่าง Service', en: 'Technician' },
   roleAdmin: { th: 'แอดมิน / ผู้บริหาร', en: 'Admin / Executive' },
