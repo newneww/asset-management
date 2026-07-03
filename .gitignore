@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+*.local
+
+# env — ห้าม commit ค่าจริง
+.env
+.env.*
+!.env.example
+
+# ไฟล์ข้อมูลจริง (มีข้อมูลร้าน/ทรัพย์สินจริง — กันหลุดออก repo)
+*.xlsx
+*.docx
+*.csv
+import-data/
+data/
+uploads/
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.log
