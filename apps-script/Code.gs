@@ -43,9 +43,31 @@ var ROLES = ['technician', 'admin', 'executive'];
 var TOKEN_TTL_HOURS = 12;
 
 // ===== Web entry points =====
+// doGet เสิร์ฟหน้าเว็บทั้งหมด (Index.html) — เปิด URL /exec แล้วได้ตัวเว็บเลย
 function doGet(e) {
-  // ใช้ทดสอบว่า deploy สำเร็จ (เปิด URL ในเบราว์เซอร์)
-  return json_({ ok: true, data: { service: 'asset-management', ready: true } });
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('ระบบจัดการทรัพย์สินอุปกรณ์')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * จุดเรียกจากหน้าเว็บผ่าน google.script.run — ใช้ ROUTES เดียวกับ doPost
+ * รับ payload เป็น JSON string, คืน { ok, data } หรือ { ok, error }
+ */
+function apiCall(action, payload) {
+  try {
+    var body = payload ? JSON.parse(payload) : {};
+    body.action = action;
+    var handler = ROUTES[action];
+    if (!handler) return { ok: false, error: 'ไม่รู้จัก action: ' + action };
+    var open = { ping: true, login: true };
+    var user = null;
+    if (!open[action]) user = requireAuth_(body.token);
+    return { ok: true, data: handler(body, user) };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) ? err.message : String(err) };
+  }
 }
 
 function doPost(e) {

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body{font-family:'Sarabun','Noto Sans Thai',sans-serif;margin:0}
+    .btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:.5rem;border-radius:.5rem;padding:0 1rem;font-weight:500;cursor:pointer;border:none;transition:.15s;font-size:.95rem}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .btn-primary{background:#0f766e;color:#fff}.btn-primary:hover{background:#134e4a}
+    .btn-secondary{background:#fff;color:#374151;border:1px solid #d1d5db}.btn-secondary:hover{background:#f9fafb}
+    .btn-danger{background:#dc2626;color:#fff}.btn-danger:hover{background:#b91c1c}
+    .input{width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:.5rem;padding:.5rem .75rem;min-height:44px;font-size:1rem;font-family:inherit}
+    .input:focus{outline:none;border-color:#0f766e;box-shadow:0 0 0 1px #0f766e}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:.75rem;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .badge{display:inline-flex;align-items:center;border-radius:9999px;padding:.15rem .6rem;font-size:.75rem;font-weight:500}
+    .label{display:block;font-size:.85rem;font-weight:500;color:#374151;margin-bottom:.25rem}
+    .dash-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:.75rem}
+    @media(min-width:768px){.dash-grid{grid-template-columns:repeat(4,1fr)}.overlay{align-items:center!important}.sheet{border-radius:1rem!important;max-height:88vh!important}}
+    .pick:hover{background:#f9fafb}
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div id="app"></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" style="position:fixed;top:1rem;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:.5rem;z-index:60;pointer-events:none"></div>
+
+<script>
+// ===================== state & helpers =====================
+var state = { token:null, user:null, view:'login', params:{} };
+try { state.token = localStorage.getItem('am_token'); } catch(e){}
+var lcState = { shop:null, items:[], signature:null };
+var VIEWS = {};
+
+function api(action, params){
+  return new Promise(function(resolve, reject){
+    var payload = JSON.stringify(Object.assign({ token: state.token }, params||{}));
+    google.script.run
+      .withSuccessHandler(function(r){ (r && r.ok) ? resolve(r.data) : reject(new Error(r ? r.error : 'ไม่มีการตอบกลับ')); })
+      .withFailureHandler(function(e){ reject(e); })
+      .apiCall(action, payload);
+  });
+}
+function val(id){ var e=document.getElementById(id); return e ? e.value : ''; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function fmtDate(s){ if(!s) return '-'; var d=new Date(s); if(isNaN(d.getTime())) return '-'; return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear(); }
+function fmtDateTime(s){ if(!s) return '-'; var d=new Date(s); if(isNaN(d.getTime())) return '-'; return fmtDate(s)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function fmtBaht(n){ n=Number(n); if(isNaN(n)) return '-'; return '฿ '+n.toLocaleString('th-TH'); }
+function debounce(fn,ms){ var t; return function(){ var a=arguments,c=this; clearTimeout(t); t=setTimeout(function(){ fn.apply(c,a); }, ms||400); }; }
+
+var L = {
+  role:{technician:'ช่าง',admin:'แอดมิน',executive:'ผู้บริหาร'},
+  assetStatus:{in_stock:'อยู่ในคลัง',loaned:'ถูกยืม',damaged:'ชำรุด',lost:'สูญหาย'},
+  assetBadge:{in_stock:'bg-green-100 text-green-800',loaned:'bg-blue-100 text-blue-800',damaged:'bg-amber-100 text-amber-800',lost:'bg-red-100 text-red-700'},
+  logType:{issue:'เบิก/ยืม',transfer:'ย้ายร้าน',return:'คืนคลัง'},
+  logStatus:{active:'กำลังยืม',returned:'คืนแล้ว',pending:'รออนุมัติ',approved:'อนุมัติแล้ว',rejected:'ไม่อนุมัติ',cancelled:'ยกเลิก'},
+  logBadge:{active:'bg-green-100 text-green-800',returned:'bg-gray-100 text-gray-700',pending:'bg-amber-100 text-amber-800',approved:'bg-green-100 text-green-800',rejected:'bg-red-100 text-red-700',cancelled:'bg-red-100 text-red-700'},
+  cond:{ok:'ปกติ',damaged:'ชำรุด',lost:'สูญหาย',missing:'หาไม่พบ'},
+  condBadge:{ok:'bg-green-100 text-green-800',damaged:'bg-amber-100 text-amber-800',lost:'bg-red-100 text-red-700',missing:'bg-gray-100 text-gray-700'}
+};
+
+function toast(msg,kind){
+  var c={success:'#16a34a',error:'#dc2626',info:'#1f2937'}[kind||'info'];
+  var d=document.createElement('div');
+  d.style.cssText='background:'+c+';color:#fff;padding:.5rem 1rem;border-radius:.5rem;box-shadow:0 4px 12px rgba(0,0,0,.15);font-size:.9rem;max-width:90%';
+  d.textContent=msg; document.getElementById('toast-root').appendChild(d);
+  setTimeout(function(){ d.remove(); }, 3500);
+}
+function setContent(html){ document.getElementById('content').innerHTML=html; }
+function loading(){ setContent('<div style="text-align:center;padding:3rem;color:#9ca3af">กำลังโหลด...</div>'); }
+function showError(err){ setContent('<div class="card" style="padding:1.5rem;text-align:center;color:#b91c1c;background:#fef2f2;border-color:#fecaca">เกิดข้อผิดพลาด: '+esc(err&&err.message?err.message:err)+'</div>'); }
+function field(label,id,value,type){ return '<div style="flex:1"><label class="label">'+label+'</label><input class="input" id="'+id+'" type="'+(type||'text')+'" value="'+esc(value==null?'':value)+'"></div>'; }
+function section(title,inner){ return '<div class="card" style="padding:1rem;margin-bottom:1rem"><h2 style="font-weight:600;margin:0 0 .5rem">'+title+'</h2>'+inner+'</div>'; }
+
+// ===================== modal =====================
+function openModal(title, bodyHtml, footer){
+  document.getElementById('modal-root').innerHTML =
+    '<div class="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;display:flex;align-items:flex-end;justify-content:center" onmousedown="if(event.target===this)closeModal()">'
+    +'<div class="sheet" style="background:#fff;width:100%;max-width:560px;max-height:92vh;display:flex;flex-direction:column;border-radius:1rem 1rem 0 0">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:1rem;border-bottom:1px solid #e5e7eb"><h3 style="font-weight:600;margin:0">'+esc(title)+'</h3><button onclick="closeModal()" style="background:none;border:none;font-size:1.4rem;color:#9ca3af;cursor:pointer">&times;</button></div>'
+    +'<div style="flex:1;overflow-y:auto;padding:1rem">'+bodyHtml+'</div>'
+    +(footer?'<div style="padding:1rem;border-top:1px solid #e5e7eb">'+footer+'</div>':'')
+    +'</div></div>';
+}
+function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+// ===================== shell / nav =====================
+var NAV = [
+  {view:'dashboard',label:'แดชบอร์ด',icon:'📊'},
+  {view:'shops',label:'ร้านค้า',icon:'🏪'},
+  {view:'assets',label:'ทรัพย์สิน',icon:'📦'},
+  {view:'loans',label:'ใบยืม',icon:'📄'},
+  {view:'movements',label:'เคลื่อนย้าย',icon:'🔁'},
+  {view:'audit',label:'ตรวจนับ',icon:'📋'},
+  {view:'approvals',label:'อนุมัติ',icon:'✅',roles:['admin']},
+  {view:'reports',label:'รายงาน',icon:'📈',roles:['admin','executive']}
+];
+function renderShell(){
+  var items = NAV.filter(function(n){ return !n.roles || n.roles.indexOf(state.user.role)>=0; });
+  var nav = items.map(function(n){ return '<button class="navbtn" data-view="'+n.view+'" style="padding:.4rem .7rem;border-radius:.5rem;white-space:nowrap;font-size:.9rem;border:none;background:transparent;cursor:pointer">'+n.icon+' '+n.label+'</button>'; }).join('');
+  document.getElementById('app').innerHTML =
+    '<header style="position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #e5e7eb">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:.55rem 1rem">'
+    +'<div style="display:flex;align-items:center;gap:.5rem"><span style="font-size:1.5rem">📦</span><b style="color:#134e4a">จัดการทรัพย์สิน</b></div>'
+    +'<div style="display:flex;align-items:center;gap:.6rem"><span style="font-size:.8rem;color:#6b7280">'+esc(state.user.full_name)+' · '+esc(L.role[state.user.role]||'')+'</span><button class="btn btn-secondary" style="min-height:auto;padding:.3rem .6rem" onclick="logout()">ออก</button></div>'
+    +'</div>'
+    +'<nav id="navbar" style="display:flex;gap:.25rem;overflow-x:auto;padding:0 .6rem .5rem">'+nav+'</nav>'
+    +'</header>'
+    +'<main id="content" style="padding:1rem;max-width:1024px;margin:0 auto;padding-bottom:3rem"></main>';
+  document.getElementById('navbar').addEventListener('click',function(e){ var b=e.target.closest('.navbtn'); if(b) navigate(b.dataset.view); });
+}
+function navigate(view, params){ state.view=view; state.params=params||{}; if(document.getElementById('content')){ window.scrollTo(0,0); highlightNav(); (VIEWS[view]||VIEWS.dashboard)(); } }
+function highlightNav(){ var nb=document.querySelectorAll('.navbtn'); nb.forEach(function(b){ var on=b.dataset.view===state.view; b.style.background=on?'#0f766e':'transparent'; b.style.color=on?'#fff':'#374151'; }); }
+
+// ===================== auth =====================
+VIEWS.login = function(){
+  document.getElementById('app').innerHTML =
+    '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem">'
+    +'<div class="card" style="width:100%;max-width:360px;padding:1.5rem">'
+    +'<div style="text-align:center;margin-bottom:1.25rem"><div style="font-size:2.5rem">📦</div><h1 style="font-size:1.2rem;font-weight:700;color:#134e4a;margin:.25rem 0 0">ระบบจัดการทรัพย์สิน</h1><div style="font-size:.85rem;color:#6b7280">ยืม–คืน–ตรวจนับอุปกรณ์</div></div>'
+    +'<div><label class="label">ชื่อผู้ใช้</label><input class="input" id="lg_user" autocomplete="username"></div>'
+    +'<div style="margin-top:.75rem"><label class="label">รหัสผ่าน</label><input class="input" id="lg_pass" type="password" autocomplete="current-password"></div>'
+    +'<div id="lg_err" style="color:#b91c1c;font-size:.85rem;margin-top:.5rem"></div>'
+    +'<button class="btn btn-primary" style="width:100%;margin-top:1rem" id="lg_btn" onclick="doLogin()">เข้าสู่ระบบ</button>'
+    +'</div></div>';
+  document.getElementById('lg_pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
+};
+function doLogin(){
+  var btn=document.getElementById('lg_btn'); btn.disabled=true; btn.textContent='กำลังเข้าสู่ระบบ...';
+  api('login',{ username:val('lg_user'), password:val('lg_pass') }).then(function(r){
+    state.token=r.token; state.user=r.user;
+    try{ localStorage.setItem('am_token',r.token); }catch(e){}
+    renderShell(); navigate('dashboard');
+  }).catch(function(e){ document.getElementById('lg_err').textContent=e.message; btn.disabled=false; btn.textContent='เข้าสู่ระบบ'; });
+}
+function logout(){ state.token=null; state.user=null; try{ localStorage.removeItem('am_token'); }catch(e){} VIEWS.login(); }
+
+// ===================== dashboard =====================
+VIEWS.dashboard = function(){
+  loading();
+  api('dashboard').then(function(d){
+    function stat(label,v,icon){ return '<div class="card" style="padding:1rem"><div style="display:flex;justify-content:space-between"><span style="font-size:.82rem;color:#6b7280">'+label+'</span><span>'+icon+'</span></div><div style="font-size:1.5rem;font-weight:700;margin-top:.2rem">'+v+'</div></div>'; }
+    var cards='<div class="dash-grid">'
+      +stat('ทรัพย์สินทั้งหมด',d.assets.total,'📦')+stat('ถูกยืมอยู่',d.assets.loaned,'📤')
+      +stat('อยู่ในคลัง',d.assets.in_stock,'🏬')+stat('ชำรุด/สูญหาย',d.assets.damaged+d.assets.lost,'⚠️')
+      +stat('ใบยืมค้าง',d.loans.active,'📄')+stat('รออนุมัติ',d.pending,'⏳')
+      +stat('ร้านใช้งาน',d.shops.active,'🏪')+stat('มูลค่ารวม',fmtBaht(d.assets.value),'💰')+'</div>';
+    var recent = (d.recent&&d.recent.length) ? d.recent.map(function(r){
+      return '<div style="display:flex;justify-content:space-between;gap:.5rem;padding:.5rem 0;border-bottom:1px solid #f3f4f6"><div style="min-width:0"><div style="font-weight:500;font-size:.9rem">'+esc(L.logType[r.type]||r.type)+' · '+esc(r.shop_name||'-')+'</div><div style="font-size:.8rem;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.items_summary||'')+'</div></div><div style="text-align:right"><span class="badge '+(L.logBadge[r.status]||'')+'">'+esc(L.logStatus[r.status]||r.status)+'</span><div style="font-size:.72rem;color:#9ca3af;margin-top:.15rem">'+fmtDateTime(r.ts)+'</div></div></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:1rem">ยังไม่มีกิจกรรม</div>';
+    setContent('<h1 style="font-size:1.25rem;font-weight:700;margin:0 0 1rem">สวัสดี '+esc(state.user.full_name)+'</h1>'+cards
+      +'<div class="card" style="padding:1rem;margin-top:1rem"><h2 style="font-weight:600;margin:0 0 .5rem">กิจกรรมล่าสุด</h2>'+recent+'</div>');
+  }).catch(showError);
+};
+
+// ===================== shops =====================
+VIEWS.shops = function(){
+  setContent('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h1 style="font-size:1.25rem;font-weight:700;margin:0">ร้านค้า</h1><button class="btn btn-primary" onclick="shopForm()">+ เพิ่มร้าน</button></div>'
+    +'<input class="input" id="shop-q" placeholder="ค้นหาร้าน / รหัส / จังหวัด" style="margin-bottom:1rem"><div id="list"></div>');
+  document.getElementById('shop-q').addEventListener('input',debounce(function(){ loadShopList(this.value); },400));
+  loadShopList('');
+};
+function loadShopList(q){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listShops',{q:q,pageSize:100}).then(function(res){
+    list.innerHTML = res.rows.length ? res.rows.map(function(s){
+      return '<div class="card" onclick="navigate(\'shopDetail\',{id:\''+s.id+'\'})" style="display:flex;justify-content:space-between;align-items:center;padding:1rem;margin-bottom:.5rem;cursor:pointer"><div style="min-width:0"><div style="font-weight:500">'+esc(s.name)+'</div><div style="font-size:.85rem;color:#6b7280">'+esc(s.code)+' · '+esc([s.district,s.province].filter(Boolean).join(', ')||'-')+'</div></div><span class="badge '+(s.status==='active'?'bg-green-100 text-green-800':'bg-gray-100 text-gray-600')+'">'+(s.status==='active'?'ใช้งาน':'ปิด')+'</span></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:2rem">ไม่พบร้านค้า</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+function shopForm(shop){
+  shop=shop||{};
+  var body='<div style="display:flex;flex-direction:column;gap:.75rem">'
+    +field('ชื่อร้าน *','sf_name',shop.name)
+    +'<div style="display:flex;gap:.75rem">'+field('อำเภอ/เขต','sf_district',shop.district)+field('จังหวัด','sf_province',shop.province)+'</div>'
+    +field('ที่อยู่','sf_address',shop.address)
+    +'<div style="display:flex;gap:.75rem">'+field('ผู้ติดต่อ','sf_contact',shop.contact_name)+field('โทรศัพท์','sf_phone',shop.phone)+'</div>'
+    +'<div><label class="label">สถานะ</label><select class="input" id="sf_status"><option value="active"'+(shop.status!=='inactive'?' selected':'')+'>ใช้งาน</option><option value="inactive"'+(shop.status==='inactive'?' selected':'')+'>ปิด</option></select></div>'
+    +'</div>';
+  openModal(shop.id?'แก้ไขร้านค้า':'เพิ่มร้านค้า', body,
+    '<div style="display:flex;gap:.5rem"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">ยกเลิก</button><button class="btn btn-primary" style="flex:1" onclick="saveShop(\''+(shop.id||'')+'\')">บันทึก</button></div>');
+}
+function saveShop(id){
+  var shop={ name:val('sf_name'), district:val('sf_district'), province:val('sf_province'), address:val('sf_address'), contact_name:val('sf_contact'), phone:val('sf_phone'), status:val('sf_status') };
+  if(id) shop.id=id;
+  if(!shop.name) return toast('กรุณากรอกชื่อร้าน','error');
+  api('upsertShop',{shop:shop}).then(function(){ closeModal(); toast('บันทึกแล้ว','success'); if(state.view==='shops') loadShopList(val('shop-q')||''); else if(state.view==='shopDetail') VIEWS.shopDetail(); }).catch(function(e){ toast(e.message,'error'); });
+}
+VIEWS.shopDetail = function(){
+  loading();
+  api('getShop',{id:state.params.id}).then(function(d){
+    var s=d.shop;
+    var assets = d.assets.length ? d.assets.map(function(a){ return '<div style="display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid #f3f4f6;font-size:.9rem"><span>'+esc(a.name)+' <span style="color:#9ca3af">('+esc(a.code)+')</span></span><span class="badge '+(L.assetBadge[a.status]||'')+'">'+esc(L.assetStatus[a.status]||a.status)+'</span></div>'; }).join('') : '<div style="color:#9ca3af;padding:.5rem 0">ยังไม่มีอุปกรณ์ที่ร้านนี้</div>';
+    var logs = d.logs.length ? d.logs.map(function(l){ return '<div style="display:flex;justify-content:space-between;gap:.5rem;padding:.5rem 0;border-bottom:1px solid #f3f4f6;font-size:.9rem"><div style="min-width:0"><div style="font-weight:500">'+esc(L.logType[l.type]||l.type)+(l.loan_no?' · '+esc(l.loan_no):'')+'</div><div style="font-size:.8rem;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.items_summary||'')+'</div></div><span class="badge '+(L.logBadge[l.status]||'')+'">'+esc(L.logStatus[l.status]||l.status)+'</span></div>'; }).join('') : '<div style="color:#9ca3af;padding:.5rem 0">ยังไม่มีประวัติ</div>';
+    setContent(
+      '<button class="btn btn-secondary" style="margin-bottom:1rem" onclick="navigate(\'shops\')">← กลับ</button>'
+      +'<div style="display:flex;justify-content:space-between;align-items:start;gap:.5rem;margin-bottom:1rem"><div><h1 style="font-size:1.25rem;font-weight:700;margin:0">'+esc(s.name)+'</h1><div style="color:#6b7280;font-size:.9rem">'+esc(s.code)+' · '+esc([s.district,s.province].filter(Boolean).join(', '))+'</div></div><button class="btn btn-secondary" onclick=\'shopForm('+JSON.stringify(s).replace(/'/g,"&#39;")+')\'>แก้ไข</button></div>'
+      +'<button class="btn btn-primary" style="width:100%;margin-bottom:1rem" onclick="startLoanForShop('+JSON.stringify({id:s.id,name:s.name,code:s.code,contact_name:s.contact_name,address:s.address,district:s.district,province:s.province}).replace(/'/g,"&#39;")+')">+ ทำใบยืมให้ร้านนี้</button>'
+      +section('ข้อมูลร้าน','<div style="font-size:.9rem;line-height:1.8"><div><b>ผู้ติดต่อ:</b> '+esc(s.contact_name||'-')+'</div><div><b>โทร:</b> '+esc(s.phone||'-')+'</div><div><b>ที่อยู่:</b> '+esc([s.address,s.district,s.province].filter(Boolean).join(' ')||'-')+'</div></div>')
+      +section('ทรัพย์สินที่ร้านนี้ ('+d.assets.length+')',assets)
+      +section('ประวัติการเคลื่อนไหว',logs)
+    );
+  }).catch(showError);
+};
+function startLoanForShop(shop){ navigate('loanCreate',{shop:shop}); }
+
+// ===================== assets =====================
+VIEWS.assets = function(){
+  setContent('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h1 style="font-size:1.25rem;font-weight:700;margin:0">ทรัพย์สิน / อุปกรณ์</h1><button class="btn btn-primary" onclick="assetForm()">+ เพิ่ม</button></div>'
+    +'<div style="display:flex;gap:.5rem;margin-bottom:1rem"><input class="input" id="asset-q" placeholder="ค้นหา ชื่อ / รหัส / serial" style="flex:1"><select class="input" id="asset-status" style="width:150px"><option value="">ทุกสถานะ</option><option value="in_stock">อยู่ในคลัง</option><option value="loaned">ถูกยืม</option><option value="damaged">ชำรุด</option><option value="lost">สูญหาย</option></select></div><div id="list"></div>');
+  document.getElementById('asset-q').addEventListener('input',debounce(loadAssetList,400));
+  document.getElementById('asset-status').addEventListener('change',loadAssetList);
+  loadAssetList();
+};
+var _assetCats=[];
+function loadAssetList(){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listAssets',{q:val('asset-q'),status:val('asset-status'),pageSize:150}).then(function(res){
+    _assetCats=res.categories||[];
+    list.innerHTML = res.rows.length ? res.rows.map(function(a){
+      return '<div class="card" onclick=\'assetForm('+JSON.stringify(a).replace(/'/g,"&#39;")+')\' style="display:flex;justify-content:space-between;align-items:center;padding:1rem;margin-bottom:.5rem;cursor:pointer"><div style="min-width:0"><div style="font-weight:500">'+esc(a.name)+'</div><div style="font-size:.85rem;color:#6b7280">'+esc(a.code)+' · '+esc(a.category||'-')+(a.serial?' · S/N '+esc(a.serial):'')+'</div></div><div style="text-align:right"><span class="badge '+(L.assetBadge[a.status]||'')+'">'+esc(L.assetStatus[a.status]||a.status)+'</span><div style="font-size:.75rem;color:#9ca3af;margin-top:.15rem">'+fmtBaht(a.value)+'</div></div></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:2rem">ไม่พบอุปกรณ์</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+function assetForm(a){
+  a=a||{};
+  var opts=['in_stock','loaned','damaged','lost'].map(function(s){ return '<option value="'+s+'"'+(a.status===s?' selected':'')+'>'+L.assetStatus[s]+'</option>'; }).join('');
+  var cats=_assetCats.map(function(c){ return '<option value="'+esc(c)+'">'; }).join('');
+  var body='<div style="display:flex;flex-direction:column;gap:.75rem">'
+    +field('ชื่ออุปกรณ์ *','af_name',a.name)
+    +'<div style="display:flex;gap:.75rem"><div style="flex:1"><label class="label">หมวดหมู่</label><input class="input" id="af_category" list="af_cats" value="'+esc(a.category||'')+'"><datalist id="af_cats">'+cats+'</datalist></div>'+field('Serial','af_serial',a.serial)+'</div>'
+    +'<div style="display:flex;gap:.75rem">'+field('หน่วย','af_unit',a.unit||'ชิ้น')+field('มูลค่า (บาท)','af_value',a.value,'number')+'</div>'
+    +'<div><label class="label">สถานะ</label><select class="input" id="af_status">'+opts+'</select></div>'
+    +'</div>';
+  openModal(a.id?'แก้ไขอุปกรณ์':'เพิ่มอุปกรณ์', body,
+    '<div style="display:flex;gap:.5rem"><button class="btn btn-secondary" style="flex:1" onclick="closeModal()">ยกเลิก</button><button class="btn btn-primary" style="flex:1" onclick="saveAsset(\''+(a.id||'')+'\')">บันทึก</button></div>');
+}
+function saveAsset(id){
+  var a={ name:val('af_name'), category:val('af_category'), serial:val('af_serial'), unit:val('af_unit'), value:val('af_value'), status:val('af_status') };
+  if(id) a.id=id;
+  if(!a.name) return toast('กรุณากรอกชื่ออุปกรณ์','error');
+  api('upsertAsset',{asset:a}).then(function(){ closeModal(); toast('บันทึกแล้ว','success'); loadAssetList(); }).catch(function(e){ toast(e.message,'error'); });
+}
+
+// ===================== loans =====================
+VIEWS.loans = function(){
+  setContent('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h1 style="font-size:1.25rem;font-weight:700;margin:0">ใบยืมอุปกรณ์</h1><button class="btn btn-primary" onclick="navigate(\'loanCreate\')">+ ทำใบยืม</button></div>'
+    +'<div style="display:flex;gap:.5rem;margin-bottom:1rem"><input class="input" id="loan-q" placeholder="ค้นหา เลขที่ / ร้าน / ช่าง" style="flex:1"><select class="input" id="loan-status" style="width:150px"><option value="">ทุกสถานะ</option><option value="active">กำลังยืม</option><option value="returned">คืนแล้ว</option></select></div><div id="list"></div>');
+  document.getElementById('loan-q').addEventListener('input',debounce(loadLoanList,400));
+  document.getElementById('loan-status').addEventListener('change',loadLoanList);
+  loadLoanList();
+};
+function loadLoanList(){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listLoans',{q:val('loan-q'),status:val('loan-status'),pageSize:100}).then(function(res){
+    list.innerHTML = res.rows.length ? res.rows.map(function(l){
+      return '<div class="card" onclick="navigate(\'loanDetail\',{id:\''+l.id+'\'})" style="display:flex;justify-content:space-between;align-items:center;padding:1rem;margin-bottom:.5rem;cursor:pointer"><div style="min-width:0"><div style="font-weight:500">'+esc(l.loan_no)+' · '+esc(l.shop_name)+'</div><div style="font-size:.85rem;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(l.items_summary||'')+'</div><div style="font-size:.75rem;color:#9ca3af">'+fmtDate(l.ts)+' · '+esc(l.technician||'')+' · มัดจำ '+fmtBaht(l.deposit)+'</div></div><span class="badge '+(L.logBadge[l.status]||'')+'">'+esc(L.logStatus[l.status]||l.status)+'</span></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:2rem">ยังไม่มีใบยืม</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+VIEWS.loanCreate = function(){
+  lcState={ shop:(state.params&&state.params.shop)||null, items:[], signature:null };
+  setContent(
+    '<button class="btn btn-secondary" style="margin-bottom:1rem" onclick="navigate(\'loans\')">← กลับ</button>'
+    +'<h1 style="font-size:1.25rem;font-weight:700;margin:0 0 1rem">ทำใบยืมอุปกรณ์</h1>'
+    +section('1. เลือกร้านค้า','<div id="lc-shop"></div>')
+    +section('2. เพิ่มอุปกรณ์','<div id="lc-assetsearch"></div><div id="lc-items"></div>')
+    +section('3. รายละเอียด','<div style="display:flex;flex-direction:column;gap:.75rem">'+field('เงินมัดจำ (บาท)','lc_deposit','','number')+field('หมายเหตุ','lc_note','')+'</div>')
+    +section('4. ลายเซ็นผู้ยืม','<canvas id="sig" style="width:100%;height:160px;border:1px dashed #9ca3af;border-radius:.5rem;background:#fff;touch-action:none;display:block"></canvas><div style="text-align:right;margin-top:.25rem"><button class="btn" style="background:none;color:#0f766e" onclick="clearSig()">ล้างลายเซ็น</button></div>')
+    +'<button class="btn btn-primary" style="width:100%" id="lc-submit" onclick="submitLoan()">บันทึกใบยืม & สร้างสัญญา PDF</button>'
+  );
+  renderShopPicker(); renderAssetSearch(); renderItems(); setTimeout(initSig,50);
+};
+function renderShopPicker(){
+  var c=document.getElementById('lc-shop'); if(!c) return;
+  if(lcState.shop){ c.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;background:#f0fdfa;padding:.5rem .75rem;border-radius:.5rem"><div><b>'+esc(lcState.shop.name)+'</b> <span style="color:#6b7280">'+esc(lcState.shop.code||'')+'</span></div><button class="btn" style="background:none;color:#0f766e" onclick="lcState.shop=null;renderShopPicker()">เปลี่ยน</button></div>'; return; }
+  c.innerHTML='<input class="input" id="lc-shopq" placeholder="ค้นหาร้าน"><div id="lc-shoplist"></div>';
+  document.getElementById('lc-shopq').addEventListener('input',debounce(function(){
+    var q=this.value; var box=document.getElementById('lc-shoplist'); if(!q){ box.innerHTML=''; return; }
+    api('listShops',{q:q,pageSize:8}).then(function(r){
+      box.innerHTML=r.rows.map(function(s){ return '<div class="pick" onclick=\'pickShop('+JSON.stringify({id:s.id,name:s.name,code:s.code,contact_name:s.contact_name,address:s.address,district:s.district,province:s.province}).replace(/'/g,"&#39;")+')\' style="padding:.5rem .75rem;border-bottom:1px solid #f3f4f6;cursor:pointer">'+esc(s.name)+' <span style="color:#9ca3af">· '+esc(s.code)+'</span></div>'; }).join('') || '<div style="padding:.5rem;color:#9ca3af">ไม่พบร้าน</div>';
+    });
+  },400));
+}
+function pickShop(s){ lcState.shop=s; renderShopPicker(); }
+function renderAssetSearch(){
+  var c=document.getElementById('lc-assetsearch'); if(!c) return;
+  c.innerHTML='<div style="display:flex;gap:.5rem"><input class="input" id="lc-assetq" placeholder="ค้นหาอุปกรณ์ในคลัง หรือพิมพ์ชื่อใหม่" style="flex:1"><button class="btn btn-secondary" onclick="addManualItem()">+ เพิ่มเอง</button></div><div id="lc-assetlist"></div>';
+  document.getElementById('lc-assetq').addEventListener('input',debounce(function(){
+    var q=this.value; var box=document.getElementById('lc-assetlist'); if(!q){ box.innerHTML=''; return; }
+    api('listAssets',{q:q,status:'in_stock',pageSize:8}).then(function(r){
+      box.innerHTML=r.rows.map(function(a){ return '<div class="pick" onclick=\'addItem('+JSON.stringify({asset_id:a.id,asset_code:a.code,asset_name:a.name,qty:1}).replace(/'/g,"&#39;")+')\' style="padding:.5rem .75rem;border-bottom:1px solid #f3f4f6;cursor:pointer">'+esc(a.name)+' <span style="color:#9ca3af">· '+esc(a.code)+(a.serial?' · '+esc(a.serial):'')+'</span></div>'; }).join('') || '<div style="padding:.5rem;color:#9ca3af">ไม่พบในคลัง — กด "เพิ่มเอง" ได้</div>';
+    });
+  },400));
+}
+function addManualItem(){ var q=val('lc-assetq'); if(!q.trim()) return; addItem({asset_name:q.trim(),qty:1}); document.getElementById('lc-assetq').value=''; document.getElementById('lc-assetlist').innerHTML=''; }
+function addItem(it){ lcState.items.push(it); renderItems(); var q=document.getElementById('lc-assetq'); if(q){q.value='';} var box=document.getElementById('lc-assetlist'); if(box) box.innerHTML=''; }
+function renderItems(){
+  var c=document.getElementById('lc-items'); if(!c) return;
+  c.innerHTML = lcState.items.length ? '<div style="margin-top:.5rem">'+lcState.items.map(function(it,i){
+    return '<div style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;border-bottom:1px solid #f3f4f6"><div style="flex:1;min-width:0"><div style="font-size:.9rem;font-weight:500">'+esc(it.asset_name)+'</div>'+(it.asset_code?'<div style="font-size:.72rem;color:#9ca3af">'+esc(it.asset_code)+'</div>':'')+'</div><input type="number" min="1" value="'+it.qty+'" class="input" style="width:70px" onchange="lcState.items['+i+'].qty=Number(this.value)"><button class="btn" style="background:none;color:#dc2626" onclick="lcState.items.splice('+i+',1);renderItems()">✕</button></div>';
+  }).join('')+'</div>' : '';
+}
+function initSig(){
+  var canvas=document.getElementById('sig'); if(!canvas) return;
+  var ctx=canvas.getContext('2d'); var ratio=window.devicePixelRatio||1; var rect=canvas.getBoundingClientRect();
+  canvas.width=rect.width*ratio; canvas.height=rect.height*ratio; ctx.scale(ratio,ratio);
+  ctx.lineWidth=2; ctx.lineCap='round'; ctx.strokeStyle='#111827';
+  var drawing=false;
+  function pos(e){ var r=canvas.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; }
+  canvas.addEventListener('pointerdown',function(e){ drawing=true; var p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove',function(e){ if(!drawing) return; var p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); });
+  function end(){ if(drawing){ drawing=false; lcState.signature=canvas.toDataURL('image/png'); } }
+  canvas.addEventListener('pointerup',end); canvas.addEventListener('pointerleave',end);
+}
+function clearSig(){ var c=document.getElementById('sig'); if(c){ c.getContext('2d').clearRect(0,0,c.width,c.height); } lcState.signature=null; }
+function submitLoan(){
+  if(!lcState.shop) return toast('กรุณาเลือกร้านค้า','error');
+  if(!lcState.items.length) return toast('กรุณาเพิ่มอุปกรณ์อย่างน้อย 1 รายการ','error');
+  var btn=document.getElementById('lc-submit'); btn.disabled=true; btn.textContent='กำลังบันทึก & สร้าง PDF...';
+  api('createLoan',{ shop_id:lcState.shop.id, items:lcState.items, deposit:Number(val('lc_deposit')||0), note:val('lc_note'), signature:lcState.signature })
+    .then(function(loan){ toast('สร้างใบยืม '+loan.loan_no+' แล้ว','success'); navigate('loanDetail',{id:loan.id}); })
+    .catch(function(e){ toast(e.message,'error'); btn.disabled=false; btn.textContent='บันทึกใบยืม & สร้างสัญญา PDF'; });
+}
+VIEWS.loanDetail = function(){
+  loading();
+  api('getLoan',{id:state.params.id}).then(function(l){
+    var items=(l.items||[]).map(function(it){ return '<div style="display:flex;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid #f3f4f6;font-size:.9rem"><span>'+esc(it.asset_name)+(it.asset_code?' <span style="color:#9ca3af">('+esc(it.asset_code)+')</span>':'')+'</span><b>x'+it.qty+'</b></div>'; }).join('');
+    var actions='';
+    if(l.contract_url && l.contract_url!=='#demo-pdf') actions+='<a class="btn btn-secondary" style="flex:1;text-decoration:none" href="'+esc(l.contract_url)+'" target="_blank">📄 เปิดสัญญา PDF</a>';
+    if(l.status==='active') actions+='<button class="btn btn-primary" style="flex:1" onclick="returnLoan(\''+l.id+'\')">บันทึกการคืน</button>';
+    setContent(
+      '<button class="btn btn-secondary" style="margin-bottom:1rem" onclick="navigate(\'loans\')">← กลับ</button>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><div><h1 style="font-size:1.25rem;font-weight:700;margin:0">ใบยืม '+esc(l.loan_no)+'</h1><div style="color:#6b7280;font-size:.9rem">'+esc(l.shop_name||'')+'</div></div><span class="badge '+(L.logBadge[l.status]||'')+'">'+esc(L.logStatus[l.status]||l.status)+'</span></div>'
+      +section('รายการอุปกรณ์',items||'-')
+      +section('รายละเอียด','<div style="font-size:.9rem;line-height:1.9"><div><b>วันที่:</b> '+fmtDateTime(l.ts)+'</div><div><b>ช่าง:</b> '+esc(l.technician||'-')+'</div><div><b>เงินมัดจำ:</b> '+fmtBaht(l.deposit)+'</div>'+(l.note?'<div><b>หมายเหตุ:</b> '+esc(l.note)+'</div>':'')+'</div>')
+      +(l.signature?section('ลายเซ็นผู้ยืม','<img src="'+esc(l.signature)+'" style="height:90px;border:1px solid #e5e7eb;border-radius:.5rem;background:#fff">'):'')
+      +(actions?'<div style="display:flex;gap:.5rem">'+actions+'</div>':'')
+    );
+  }).catch(showError);
+};
+function returnLoan(id){ api('returnLoan',{id:id}).then(function(){ toast('บันทึกการคืนแล้ว','success'); navigate('loanDetail',{id:id}); }).catch(function(e){ toast(e.message,'error'); }); }
+
+// ===================== movements =====================
+VIEWS.movements = function(){
+  setContent('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h1 style="font-size:1.25rem;font-weight:700;margin:0">การเคลื่อนย้าย</h1><button class="btn btn-primary" onclick="movementForm()">+ แจ้งเคลื่อนย้าย</button></div><div id="list"></div>');
+  loadMovements();
+};
+function loadMovements(){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listMovements',{pageSize:100}).then(function(res){
+    list.innerHTML = res.rows.length ? res.rows.map(function(m){
+      return '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:1rem;margin-bottom:.5rem"><div style="min-width:0"><div style="font-weight:500">'+esc(L.logType[m.type]||m.type)+' · '+esc(m.shop_name||'คลัง')+'</div><div style="font-size:.85rem;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(m.items_summary||'')+'</div><div style="font-size:.75rem;color:#9ca3af">'+fmtDateTime(m.ts)+' · '+esc(m.technician||'')+(m.approved_by?' · โดย '+esc(m.approved_by):'')+'</div></div><span class="badge '+(L.logBadge[m.status]||'')+'">'+esc(L.logStatus[m.status]||m.status)+'</span></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:2rem">ยังไม่มีรายการ</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+var mvState={ type:'transfer', from:null, to:null, items:[] };
+function movementForm(){
+  mvState={ type:'transfer', from:null, to:null, items:[] };
+  var body='<div style="display:flex;flex-direction:column;gap:.75rem">'
+    +'<div style="display:flex;gap:.5rem"><button id="mv-t-transfer" class="btn" style="flex:1;background:#0f766e;color:#fff" onclick="mvType(\'transfer\')">ย้ายร้าน</button><button id="mv-t-return" class="btn" style="flex:1;background:#f3f4f6;color:#374151" onclick="mvType(\'return\')">คืนเข้าคลัง</button></div>'
+    +'<div><label class="label">จากร้าน (ต้นทาง)</label><div id="mv-from"></div></div>'
+    +'<div id="mv-to-wrap"><label class="label">ไปร้าน (ปลายทาง)</label><div id="mv-to"></div></div>'
+    +'<div><label class="label">อุปกรณ์</label><div id="mv-assetsearch"></div><div id="mv-items"></div></div>'
+    +field('หมายเหตุ','mv_note','')
+    +'</div>';
+  openModal('แจ้งเคลื่อนย้ายอุปกรณ์', body, '<button class="btn btn-primary" style="width:100%" onclick="submitMovement()">ส่งคำขอ (รออนุมัติ)</button>');
+  mvShopPicker('from'); mvShopPicker('to'); mvAssetSearch();
+}
+function mvType(t){ mvState.type=t; document.getElementById('mv-t-transfer').style.background=t==='transfer'?'#0f766e':'#f3f4f6'; document.getElementById('mv-t-transfer').style.color=t==='transfer'?'#fff':'#374151'; document.getElementById('mv-t-return').style.background=t==='return'?'#0f766e':'#f3f4f6'; document.getElementById('mv-t-return').style.color=t==='return'?'#fff':'#374151'; document.getElementById('mv-to-wrap').style.display=t==='transfer'?'block':'none'; }
+function mvShopPicker(which){
+  var c=document.getElementById('mv-'+which); if(!c) return;
+  var sel=mvState[which];
+  if(sel){ c.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;background:#f9fafb;padding:.4rem .6rem;border-radius:.5rem;font-size:.9rem"><span>'+esc(sel.name)+'</span><button class="btn" style="background:none;color:#0f766e" onclick="mvState.'+which+'=null;mvShopPicker(\''+which+'\')">เปลี่ยน</button></div>'; return; }
+  c.innerHTML='<input class="input" id="mv-q-'+which+'" placeholder="ค้นหาร้าน"><div id="mv-list-'+which+'"></div>';
+  document.getElementById('mv-q-'+which).addEventListener('input',debounce(function(){
+    var q=this.value; var box=document.getElementById('mv-list-'+which); if(!q){ box.innerHTML=''; return; }
+    api('listShops',{q:q,pageSize:6}).then(function(r){ box.innerHTML=r.rows.map(function(s){ return '<div class="pick" onclick=\'mvPickShop("'+which+'",'+JSON.stringify({id:s.id,name:s.name}).replace(/'/g,"&#39;")+')\' style="padding:.4rem .6rem;border-bottom:1px solid #f3f4f6;cursor:pointer">'+esc(s.name)+' <span style="color:#9ca3af">· '+esc(s.code)+'</span></div>'; }).join(''); });
+  },400));
+}
+function mvPickShop(which,s){ mvState[which]=s; mvShopPicker(which); }
+function mvAssetSearch(){
+  var c=document.getElementById('mv-assetsearch'); if(!c) return;
+  c.innerHTML='<input class="input" id="mv-assetq" placeholder="ค้นหาอุปกรณ์"><div id="mv-assetlist"></div>';
+  document.getElementById('mv-assetq').addEventListener('input',debounce(function(){
+    var q=this.value; var box=document.getElementById('mv-assetlist'); if(!q){ box.innerHTML=''; return; }
+    api('listAssets',{q:q,pageSize:6}).then(function(r){ box.innerHTML=r.rows.map(function(a){ return '<div class="pick" onclick=\'mvAddItem('+JSON.stringify({asset_id:a.id,asset_code:a.code,asset_name:a.name,qty:1}).replace(/'/g,"&#39;")+')\' style="padding:.4rem .6rem;border-bottom:1px solid #f3f4f6;cursor:pointer">'+esc(a.name)+' <span style="color:#9ca3af">· '+esc(a.code)+'</span></div>'; }).join(''); });
+  },400));
+}
+function mvAddItem(it){ mvState.items.push(it); document.getElementById('mv-assetq').value=''; document.getElementById('mv-assetlist').innerHTML=''; mvRenderItems(); }
+function mvRenderItems(){ var c=document.getElementById('mv-items'); c.innerHTML=mvState.items.map(function(it,i){ return '<div style="display:flex;justify-content:space-between;align-items:center;padding:.3rem 0;font-size:.9rem"><span>'+esc(it.asset_name)+'</span><button class="btn" style="background:none;color:#dc2626" onclick="mvState.items.splice('+i+',1);mvRenderItems()">✕</button></div>'; }).join(''); }
+function submitMovement(){
+  if(!mvState.items.length) return toast('กรุณาเลือกอุปกรณ์','error');
+  if(mvState.type==='transfer' && !mvState.to) return toast('กรุณาเลือกร้านปลายทาง','error');
+  api('createMovement',{ type:mvState.type, from_shop_id:mvState.from?mvState.from.id:'', to_shop_id:mvState.to?mvState.to.id:'', items:mvState.items, note:val('mv_note') })
+    .then(function(){ closeModal(); toast('ส่งคำขอแล้ว รออนุมัติ','success'); loadMovements(); }).catch(function(e){ toast(e.message,'error'); });
+}
+
+// ===================== audit =====================
+VIEWS.audit = function(){
+  var y=new Date().getFullYear();
+  setContent('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem"><h1 style="font-size:1.25rem;font-weight:700;margin:0">ตรวจนับทรัพย์สิน</h1><button class="btn btn-primary" onclick="auditForm()">+ เริ่มตรวจนับ</button></div>'
+    +'<select class="input" id="audit-cycle" style="width:160px;margin-bottom:1rem"><option value="'+y+'">รอบปี '+y+'</option><option value="'+(y-1)+'">รอบปี '+(y-1)+'</option><option value="'+(y-2)+'">รอบปี '+(y-2)+'</option></select><div id="list"></div>');
+  document.getElementById('audit-cycle').addEventListener('change',loadAudit);
+  loadAudit();
+};
+function loadAudit(){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listAudit',{cycle:val('audit-cycle'),pageSize:150}).then(function(res){
+    list.innerHTML = res.rows.length ? res.rows.map(function(r){
+      return '<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:1rem;margin-bottom:.5rem"><div style="min-width:0"><div style="font-weight:500">'+esc(r.asset_name)+' <span style="color:#9ca3af">('+esc(r.asset_code||'-')+')</span></div><div style="font-size:.85rem;color:#6b7280">'+esc(r.shop_name||'-')+' · คาด '+r.expected_qty+' / นับได้ '+r.counted_qty+'</div><div style="font-size:.75rem;color:#9ca3af">'+fmtDateTime(r.ts)+' · '+esc(r.technician||'')+'</div></div><span class="badge '+(L.condBadge[r.condition]||'')+'">'+esc(L.cond[r.condition]||r.condition)+'</span></div>';
+    }).join('') : '<div style="text-align:center;color:#9ca3af;padding:2rem">ยังไม่มีข้อมูลตรวจนับในรอบนี้</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+var adState={ shop:null, lines:[] };
+function auditForm(){
+  adState={ shop:null, lines:[] }; adAddLine();
+  var body='<div style="display:flex;flex-direction:column;gap:.75rem"><div><label class="label">ร้านค้า (ไม่บังคับ)</label><div id="ad-shop"></div></div><div id="ad-lines"></div><button class="btn btn-secondary" style="width:100%" onclick="adAddLine()">+ เพิ่มรายการ</button></div>';
+  openModal('ตรวจนับ รอบปี '+val('audit-cycle'), body, '<button class="btn btn-primary" style="width:100%" onclick="submitAudit()">บันทึกการตรวจนับ</button>');
+  adShopPicker(); adRenderLines();
+}
+function adShopPicker(){
+  var c=document.getElementById('ad-shop'); if(!c) return;
+  if(adState.shop){ c.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;background:#f9fafb;padding:.4rem .6rem;border-radius:.5rem;font-size:.9rem"><span>'+esc(adState.shop.name)+'</span><button class="btn" style="background:none;color:#0f766e" onclick="adState.shop=null;adShopPicker()">เปลี่ยน</button></div>'; return; }
+  c.innerHTML='<input class="input" id="ad-shopq" placeholder="ค้นหาร้าน"><div id="ad-shoplist"></div>';
+  document.getElementById('ad-shopq').addEventListener('input',debounce(function(){ var q=this.value; var box=document.getElementById('ad-shoplist'); if(!q){box.innerHTML='';return;} api('listShops',{q:q,pageSize:6}).then(function(r){ box.innerHTML=r.rows.map(function(s){ return '<div class="pick" onclick=\'adPickShop('+JSON.stringify({id:s.id,name:s.name}).replace(/'/g,"&#39;")+')\' style="padding:.4rem .6rem;border-bottom:1px solid #f3f4f6;cursor:pointer">'+esc(s.name)+'</div>'; }).join(''); }); },400));
+}
+function adPickShop(s){ adState.shop=s; adShopPicker(); }
+function adAddLine(){ adState.lines.push({asset_code:'',asset_name:'',expected_qty:0,counted_qty:0,condition:'ok',note:''}); adRenderLines(); }
+function adRenderLines(){
+  var c=document.getElementById('ad-lines'); if(!c) return;
+  c.innerHTML=adState.lines.map(function(l,i){
+    var opts=Object.keys(L.cond).map(function(k){ return '<option value="'+k+'"'+(l.condition===k?' selected':'')+'>'+L.cond[k]+'</option>'; }).join('');
+    return '<div style="border:1px solid #e5e7eb;border-radius:.5rem;padding:.6rem;margin-bottom:.5rem"><input class="input" placeholder="ชื่ออุปกรณ์" value="'+esc(l.asset_name)+'" oninput="adState.lines['+i+'].asset_name=this.value" style="margin-bottom:.4rem"><div style="display:flex;gap:.4rem"><input class="input" placeholder="รหัส" value="'+esc(l.asset_code)+'" oninput="adState.lines['+i+'].asset_code=this.value"><select class="input" onchange="adState.lines['+i+'].condition=this.value">'+opts+'</select></div><div style="display:flex;gap:.4rem;margin-top:.4rem"><input class="input" type="number" placeholder="คาด" value="'+(l.expected_qty||'')+'" oninput="adState.lines['+i+'].expected_qty=Number(this.value)"><input class="input" type="number" placeholder="นับได้" value="'+(l.counted_qty||'')+'" oninput="adState.lines['+i+'].counted_qty=Number(this.value)"></div></div>';
+  }).join('');
+}
+function submitAudit(){
+  var items=adState.lines.filter(function(l){ return l.asset_name.trim(); });
+  if(!items.length) return toast('กรุณากรอกอย่างน้อย 1 รายการ','error');
+  api('createAudit',{ cycle:val('audit-cycle'), shop_id:adState.shop?adState.shop.id:'', items:items })
+    .then(function(r){ closeModal(); toast('บันทึก '+r.inserted+' รายการแล้ว','success'); loadAudit(); }).catch(function(e){ toast(e.message,'error'); });
+}
+
+// ===================== approvals =====================
+VIEWS.approvals = function(){
+  setContent('<h1 style="font-size:1.25rem;font-weight:700;margin:0 0 1rem">รออนุมัติ</h1><div id="list"></div>');
+  loadApprovals();
+};
+function loadApprovals(){
+  var list=document.getElementById('list'); list.innerHTML='<div style="color:#9ca3af;padding:1rem">กำลังโหลด...</div>';
+  api('listMovements',{status:'pending',pageSize:100}).then(function(res){
+    list.innerHTML = res.rows.length ? res.rows.map(function(m){
+      return '<div class="card" style="padding:1rem;margin-bottom:.5rem"><div style="margin-bottom:.5rem"><div style="font-weight:500">'+esc(L.logType[m.type]||m.type)+' · '+esc(m.shop_name||'คลัง')+'</div><div style="font-size:.85rem;color:#6b7280">'+esc(m.items_summary||'')+'</div><div style="font-size:.75rem;color:#9ca3af">'+fmtDateTime(m.ts)+' · แจ้งโดย '+esc(m.technician||'')+'</div></div><div style="display:flex;gap:.5rem"><button class="btn btn-primary" style="flex:1" onclick="decide(\''+m.id+'\',\'approved\')">✅ อนุมัติ</button><button class="btn btn-danger" style="flex:1" onclick="decide(\''+m.id+'\',\'rejected\')">✕ ปฏิเสธ</button></div></div>';
+    }).join('') : '<div class="card" style="text-align:center;color:#9ca3af;padding:2rem">ไม่มีรายการรออนุมัติ 🎉</div>';
+  }).catch(function(e){ list.innerHTML='<div style="color:#b91c1c;padding:1rem">'+esc(e.message)+'</div>'; });
+}
+function decide(id,decision){ api('approveMovement',{id:id,decision:decision}).then(function(){ toast(decision==='approved'?'อนุมัติแล้ว':'ปฏิเสธแล้ว','success'); loadApprovals(); }).catch(function(e){ toast(e.message,'error'); }); }
+
+// ===================== reports =====================
+VIEWS.reports = function(){
+  setContent('<h1 style="font-size:1.25rem;font-weight:700;margin:0 0 1rem">รายงาน & ส่งออก</h1>'
+    +'<div class="card" style="padding:1rem;max-width:480px"><div style="display:flex;flex-direction:column;gap:.75rem">'
+    +'<div><label class="label">ตารางข้อมูล</label><select class="input" id="rp_table"><option value="LOG">ประวัติ/ใบยืม (Log &amp; History)</option><option value="ASSETS">ทรัพย์สิน (Asset Master)</option><option value="SHOPS">ร้านค้า (Shop Master)</option><option value="AUDIT">การตรวจนับ (Audit)</option></select></div>'
+    +'<div style="display:flex;gap:.75rem">'+field('ตั้งแต่วันที่','rp_from','','date')+field('ถึงวันที่','rp_to','','date')+'</div>'
+    +'<button class="btn btn-primary" style="width:100%" id="rp_btn" onclick="doExport()">⬇️ ดาวน์โหลด CSV</button>'
+    +'<div style="font-size:.78rem;color:#9ca3af">เว้นช่วงวันที่ = ส่งออกทั้งหมด · เปิดใน Excel/Google Sheets ได้</div>'
+    +'</div></div>');
+};
+function doExport(){
+  var btn=document.getElementById('rp_btn'); btn.disabled=true; btn.textContent='กำลังสร้างไฟล์...';
+  api('exportCsv',{ table:val('rp_table'), from:val('rp_from')?new Date(val('rp_from')).toISOString():'', to:val('rp_to')?new Date(val('rp_to')+'T23:59:59').toISOString():'' })
+    .then(function(r){
+      var blob=new Blob(['﻿'+r.csv],{type:'text/csv;charset=utf-8;'});
+      var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=r.filename;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast('ดาวน์โหลด '+r.count+' แถวแล้ว','success');
+    }).catch(function(e){ toast(e.message,'error'); })
+    .then(function(){ btn.disabled=false; btn.textContent='⬇️ ดาวน์โหลด CSV'; });
+}
+
+// ===================== boot =====================
+function boot(){
+  if(state.token){
+    api('me').then(function(u){ state.user=u; renderShell(); navigate('dashboard'); })
+      .catch(function(){ state.token=null; try{localStorage.removeItem('am_token');}catch(e){} VIEWS.login(); });
+  } else { VIEWS.login(); }
+}
+boot();
+</script>
+</body>
+</html>
