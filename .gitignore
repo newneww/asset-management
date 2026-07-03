@@ -6,10 +6,12 @@ dist/
 dist-ssr/
 *.local
 
-# env — ห้าม commit ค่าจริง
+# env — ห้าม commit ค่าจริง (ยกเว้น .env.example และ .env.production
+# ที่เก็บ VITE_API_URL ซึ่งเป็น URL สาธารณะ ฝังในไฟล์ client อยู่แล้ว — เหมือนโปรเจกต์เบียร์)
 .env
 .env.*
 !.env.example
+!.env.production
 
 # ไฟล์ข้อมูลจริง (มีข้อมูลร้าน/ทรัพย์สินจริง — กันหลุดออก repo)
 *.xlsx

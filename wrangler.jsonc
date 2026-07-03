@@ -1,0 +1,11 @@
+{
+  // Cloudflare Workers (Static Assets) — เสิร์ฟเว็บ Vite ที่ build ไว้ในโฟลเดอร์ dist
+  // ใช้กับโฟลว์ "Create a Worker" (Deploy command: npx wrangler deploy)
+  "name": "asset-management",
+  "compatibility_date": "2024-11-01",
+  "assets": {
+    "directory": "./dist",
+    // เสิร์ฟ index.html สำหรับทุก path ที่ไม่พบไฟล์ (รองรับ React Router)
+    "not_found_handling": "single-page-application"
+  }
+}
