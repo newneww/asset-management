@@ -718,3 +718,70 @@ function createUser() {
   });
   return 'สร้างผู้ใช้ ' + username;
 }
+
+/**
+ * นำเข้าข้อมูลจริงแบบทีละมาก:
+ *   1) วางข้อมูลจาก Excel ลงในแท็บ Shop Master / Asset Master ใต้หัวตาราง
+ *      โดย "เว้นคอลัมน์ id ว่างไว้" (ใส่แค่คอลัมน์ที่มีข้อมูล เช่น name, category, serial, value)
+ *   2) รันฟังก์ชันนี้ — ระบบจะเติม id / code / สถานะ / วันที่ ให้แถวใหม่อัตโนมัติ
+ * รันซ้ำได้ (แถวที่มี id แล้วจะถูกข้าม)
+ */
+function importFill() {
+  var now = new Date().toISOString();
+  var res = { shops: 0, assets: 0 };
+
+  // ---- Shop Master ----
+  var shops = readObjects_(SHEETS.SHOPS);
+  var shopSeq = maxSeq_(shops, 'code');
+  shops.forEach(function (r) {
+    if (r.id || !String(r.name || '').trim()) return;
+    shopSeq++;
+    updateRowCells_(SHEETS.SHOPS, r._row, {
+      id: genId_('SH'),
+      code: r.code || ('SH-' + pad_(shopSeq, 4)),
+      status: r.status || 'active',
+      created_at: r.created_at || now,
+      updated_at: now,
+    });
+    res.shops++;
+  });
+
+  // ---- Asset Master ----
+  var assets = readObjects_(SHEETS.ASSETS);
+  var assetSeq = maxSeq_(assets, 'code');
+  assets.forEach(function (r) {
+    if (r.id || !String(r.name || '').trim()) return;
+    assetSeq++;
+    updateRowCells_(SHEETS.ASSETS, r._row, {
+      id: genId_('AS'),
+      code: r.code || ('AS-' + pad_(assetSeq, 4)),
+      status: r.status || 'in_stock',
+      unit: r.unit || 'ชิ้น',
+      created_at: r.created_at || now,
+      updated_at: now,
+    });
+    res.assets++;
+  });
+
+  var msg = 'เติมข้อมูลให้แถวใหม่แล้ว — ร้านค้า: ' + res.shops + ', ทรัพย์สิน: ' + res.assets;
+  Logger.log(msg);
+  return msg;
+}
+
+function maxSeq_(rows, field) {
+  var max = 0;
+  rows.forEach(function (r) {
+    var m = String(r[field] || '').match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  return max;
+}
+
+function updateRowCells_(name, row, patch) {
+  var sh = sheet_(name);
+  var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  Object.keys(patch).forEach(function (k) {
+    var c = headers.indexOf(k);
+    if (c !== -1) sh.getRange(row, c + 1).setValue(patch[k]);
+  });
+}
